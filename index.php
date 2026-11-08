@@ -11,6 +11,14 @@ function reply(int $status, array $data): void {
     exit;
 }
 
+$apiKey = getenv('API_KEY');
+if (getenv('REQUIRE_API_KEY') === '1' && (!$apiKey || strlen($apiKey) < 32)) {
+    reply(503, ['erro' => 'API_KEY não configurada ou menor que 32 caracteres.']);
+}
+if ($apiKey && !hash_equals($apiKey, $_SERVER['HTTP_X_API_KEY'] ?? '')) {
+    reply(401, ['erro' => 'Chave de acesso inválida ou ausente.']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Allow: POST');
     reply(405, ['erro' => 'Use POST com um objeto JSON.']);
