@@ -10,6 +10,7 @@ const URL_INICIAL = 'https://getran.detran.pi.gov.br/site/apps/veiculo/servicos/
 const PRAZO = 80000;
 let browser;
 let finished = false;
+let etapa = 'iniciar_navegador';
 const seguranca = { token_enviado: false, tamanho_token: 0, dados_enviados: false, cookie_sessao: false };
 
 class PortalError extends Error {
@@ -94,13 +95,16 @@ async function main() {
   }
   context.on('page', observe);
   observe(page);
+  etapa = 'abrir_portal';
   await page.goto(URL_INICIAL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  etapa = 'preencher_consulta';
   if (!await page.getByText('Impressão do CRLV', { exact: false }).count()) throw new Error('Página inicial inesperada.');
   await page.getByRole('textbox', { name: /placa/i }).fill(input.placa).catch(async () => page.locator('input[title="Placa"]').fill(input.placa));
   await page.locator('input[title="Renavam"]').fill(input.renavam);
   // O portal gera o token pelo seu próprio JavaScript. Uma recusa do reCAPTCHA é reportada.
   await page.waitForFunction(() => typeof window.grecaptcha !== 'undefined' && !!document.querySelector('input[name="g-recaptcha-response"]')?.value, null, { timeout: 20000 }).catch(() => {});
   seguranca.navegador = await page.evaluate(() => ({ api: typeof window.grecaptcha !== 'undefined', campos: Array.from(document.querySelectorAll('[name="g-recaptcha-response"]')).map(el => ({tag: el.tagName, tamanho: el.value.length})), scripts: Array.from(document.scripts).filter(el => /recaptcha/.test(el.src)).map(el => new URL(el.src).pathname), botao_classe: document.querySelector('#submeter').className }));
+  etapa = 'validar_consulta';
   await page.locator('#submeter').click();
   await page.waitForURL(/consulta-veiculo-emissao\.jsp/, { timeout: 18000 }).catch(() => {});
   if (!page.url().includes('consulta-veiculo-emissao.jsp')) {
@@ -146,6 +150,7 @@ async function main() {
       formularios: details
     });
   }
+  etapa = 'confirmar_proprietario';
   const externalDocument = page.locator('#cpfCnpjInput');
   const fields = await externalDocument.count() === 1 ? externalDocument : form.locator('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([disabled]):not([readonly])');
   const fieldDetails = await fields.evaluateAll(elements => elements.map(el => {
@@ -166,6 +171,7 @@ async function main() {
   await fields.nth(possible[0].index).fill(input.cpf);
   const submit = form.locator('button[type=submit], input[type=submit], button:not([type]), input[type=button]').first();
   if (!await submit.count()) throw new Error('Botão de emissão não encontrado.');
+  etapa = 'emitir_pdf';
   await submit.click();
   const deadline = Date.now() + 25000;
   while (!captured && Date.now() < deadline) {
@@ -174,6 +180,7 @@ async function main() {
     if (!captured) await page.waitForTimeout(500);
   }
   if (!captured) throw new Error('O portal não retornou um PDF válido; a emissão não foi confirmada.');
+  etapa = 'verificar_pdf';
   const pdf = await parsePdf(Buffer.from(captured.pdf_base64, 'base64'));
   const text = pdf.text.toUpperCase().replace(/[^A-Z0-9]/g, '');
   captured.verificacao_conteudo = {
@@ -204,6 +211,10 @@ main().catch(async error => {
   if (browser) await browser.close().catch(() => {});
   const result = { status: 'erro', mensagem: error instanceof PortalError || error.message.startsWith('O portal') || error.message.startsWith('A sessão') || error.message.startsWith('Não foi possível') || error.message.startsWith('Botão') || error.message.startsWith('Página inicial') ? error.message : 'Falha ao acessar o portal ou executar o navegador.' };
   if (error instanceof PortalError) result.diagnostico = error.details;
+  if (result.mensagem === 'Falha ao acessar o portal ou executar o navegador.') {
+    const codigoRede = String(error.message).match(/net::ERR_[A-Z0-9_]+/);
+    result.diagnostico = { etapa, tipo: error.name, ...(codigoRede ? { codigo_rede: codigoRede[0] } : {}) };
+  }
   if (/valida[cç][aã]o de seguran[cç]a/.test(result.mensagem)) result.diagnostico = seguranca;
   finish(result);
 });
