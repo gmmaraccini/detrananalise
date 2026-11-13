@@ -57,11 +57,24 @@ if ($raw === false || strlen($raw) > 16384) {
     reply(413, ['erro' => 'Corpo da requisição muito grande.']);
 }
 $data = json_decode($raw, true);
-$documentoInformado = $data['documento'] ?? $data['cpf'] ?? null;
-if (!is_array($data) || !isset($data['placa'], $data['renavam']) || $documentoInformado === null ||
-    !is_string($data['placa']) || !is_string($data['renavam']) || !is_string($documentoInformado)) {
-    reply(400, ['erro' => 'Informe placa, renavam e documento (CPF ou CNPJ) como strings.']);
+$camposObrigatorios = ['placa', 'renavam', 'documento'];
+if (!is_array($data)) {
+    reply(400, ['erro' => 'Envie um objeto JSON com os campos obrigatórios: placa, renavam e documento (CPF ou CNPJ).', 'campos_obrigatorios' => $camposObrigatorios]);
 }
+$camposInvalidos = [];
+foreach ($camposObrigatorios as $campo) {
+    if (!isset($data[$campo]) || !is_string($data[$campo]) || trim($data[$campo]) === '') {
+        $camposInvalidos[] = $campo;
+    }
+}
+if ($camposInvalidos) {
+    reply(400, [
+        'erro' => 'Campos obrigatórios ausentes ou inválidos: ' . implode(', ', $camposInvalidos) . '.',
+        'campos_obrigatorios' => $camposObrigatorios,
+        'campos_invalidos' => $camposInvalidos
+    ]);
+}
+$documentoInformado = $data['documento'];
 $placa = strtoupper(trim($data['placa']));
 $renavam = trim($data['renavam']);
 $cpf = strtoupper(preg_replace('/[.\/\-\s]/', '', $documentoInformado));
