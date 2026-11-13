@@ -11,6 +11,32 @@ function reply(int $status, array $data): void {
     exit;
 }
 
+function digitoVerificador(string $base, array $pesos): int {
+    $soma = 0;
+    foreach ($pesos as $i => $peso) {
+        $soma += (ord($base[$i]) - 48) * $peso;
+    }
+    $resto = $soma % 11;
+    return $resto < 2 ? 0 : 11 - $resto;
+}
+
+function documentoValido(string $documento): bool {
+    if (strlen($documento) === 11) {
+        if (preg_match('/^(\d)\1{10}$/D', $documento)) {
+            return false;
+        }
+        $d1 = digitoVerificador($documento, [10, 9, 8, 7, 6, 5, 4, 3, 2]);
+        $d2 = digitoVerificador(substr($documento, 0, 9) . $d1, [11, 10, 9, 8, 7, 6, 5, 4, 3, 2]);
+        return $documento[9] === (string) $d1 && $documento[10] === (string) $d2;
+    }
+    if (preg_match('/^(.)\1{13}$/D', $documento)) {
+        return false;
+    }
+    $d1 = digitoVerificador($documento, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    $d2 = digitoVerificador(substr($documento, 0, 12) . $d1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+    return $documento[12] === (string) $d1 && $documento[13] === (string) $d2;
+}
+
 $apiKey = getenv('API_KEY');
 if (getenv('REQUIRE_API_KEY') === '1' && (!$apiKey || strlen($apiKey) < 32)) {
     reply(503, ['erro' => 'API_KEY não configurada ou menor que 32 caracteres.']);
@@ -31,16 +57,21 @@ if ($raw === false || strlen($raw) > 16384) {
     reply(413, ['erro' => 'Corpo da requisição muito grande.']);
 }
 $data = json_decode($raw, true);
-if (!is_array($data) || !isset($data['placa'], $data['renavam'], $data['cpf']) ||
-    !is_string($data['placa']) || !is_string($data['renavam']) || !is_string($data['cpf'])) {
-    reply(400, ['erro' => 'Informe placa, renavam e cpf como strings.']);
+$documentoInformado = $data['documento'] ?? $data['cpf'] ?? null;
+if (!is_array($data) || !isset($data['placa'], $data['renavam']) || $documentoInformado === null ||
+    !is_string($data['placa']) || !is_string($data['renavam']) || !is_string($documentoInformado)) {
+    reply(400, ['erro' => 'Informe placa, renavam e documento (CPF ou CNPJ) como strings.']);
 }
 $placa = strtoupper(trim($data['placa']));
 $renavam = trim($data['renavam']);
-$cpf = trim($data['cpf']);
+$cpf = strtoupper(preg_replace('/[.\/\-\s]/', '', $documentoInformado));
 if (!preg_match('/^[A-Z]{3}[0-9][0-9A-J][0-9]{2}$/D', $placa) ||
-    !preg_match('/^[0-9]{11}$/D', $renavam) || !preg_match('/^[0-9]{11}$/D', $cpf)) {
-    reply(400, ['erro' => 'Informe placa válida e Renavam e CPF com 11 dígitos, sem pontuação.']);
+    !preg_match('/^[0-9]{11}$/D', $renavam) ||
+    !preg_match('/^(?:[0-9]{11}|[0-9A-Z]{12}[0-9]{2})$/D', $cpf)) {
+    reply(400, ['erro' => 'Informe placa válida, Renavam com 11 dígitos e documento: CPF com 11 dígitos ou CNPJ com 14 caracteres.']);
+}
+if (!documentoValido($cpf)) {
+    reply(400, ['erro' => 'CPF ou CNPJ inválido: os dígitos verificadores não conferem.']);
 }
 
 $pipes = [];
